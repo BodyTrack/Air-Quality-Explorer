@@ -1,0 +1,532 @@
+
+<head>
+<title>Air Quality Data Explorer</title>
+<script type="text/javascript" src="http://maps.google.com/maps/api/js?sensor=false"></script>
+<script type="text/javascript">
+
+(function(){
+var fusionTablesId = "1j2oX9gy1-_jJMftJhZ1aIL3hZpJ9erm8wjxspRM";
+google.maps.visualRefresh = true;
+
+var BrowserDetect = {
+    init: function () {
+        this.browser = this.searchString(this.dataBrowser) || "An unknown browser";
+        this.version = this.searchVersion(navigator.userAgent)
+                || this.searchVersion(navigator.appVersion)
+                || "an unknown version";
+        this.OS = this.searchString(this.dataOS) || "an unknown OS";
+    },
+    searchString: function (data) {
+        for (var i=0;i<data.length;i++)	{
+            var dataString = data[i].string;
+            var dataProp = data[i].prop;
+            this.versionSearchString = data[i].versionSearch || data[i].identity;
+            if (dataString) {
+                if (dataString.indexOf(data[i].subString) != -1)
+                    return data[i].identity;
+            }
+            else if (dataProp)
+                return data[i].identity;
+        }
+    },
+    searchVersion: function (dataString) {
+        var index = dataString.indexOf(this.versionSearchString);
+        if (index == -1) return;
+        return parseFloat(dataString.substring(index+this.versionSearchString.length+1));
+    },
+    dataBrowser: [
+        {
+            string: navigator.userAgent,
+            subString: "Chrome",
+            identity: "Chrome"
+        },
+        { 	string: navigator.userAgent,
+            subString: "OmniWeb",
+            versionSearch: "OmniWeb/",
+            identity: "OmniWeb"
+        },
+        {
+            string: navigator.vendor,
+            subString: "Apple",
+            identity: "Safari",
+            versionSearch: "Version"
+        },
+        {
+            prop: window.opera,
+            identity: "Opera",
+            versionSearch: "Version"
+        },
+        {
+            string: navigator.vendor,
+            subString: "iCab",
+            identity: "iCab"
+        },
+        {
+            string: navigator.vendor,
+            subString: "KDE",
+            identity: "Konqueror"
+        },
+        {
+            string: navigator.userAgent,
+            subString: "Firefox",
+            identity: "Firefox"
+        },
+        {
+            string: navigator.vendor,
+            subString: "Camino",
+            identity: "Camino"
+        },
+        {		// for newer Netscapes (6+)
+            string: navigator.userAgent,
+            subString: "Netscape",
+            identity: "Netscape"
+        },
+        {
+            string: navigator.userAgent,
+            subString: "MSIE",
+            identity: "Explorer",
+            versionSearch: "MSIE"
+        },
+        {
+            string: navigator.userAgent,
+            subString: "Gecko",
+            identity: "Mozilla",
+            versionSearch: "rv"
+        },
+        { 		// for older Netscapes (4-)
+            string: navigator.userAgent,
+            subString: "Mozilla",
+            identity: "Netscape",
+            versionSearch: "Mozilla"
+        }
+    ],
+    dataOS : [
+        {
+            string: navigator.platform,
+            subString: "Win",
+            identity: "Windows"
+        },
+        {
+            string: navigator.platform,
+            subString: "Mac",
+            identity: "Mac"
+        },
+        {
+            string: navigator.userAgent,
+            subString: "iPhone",
+            identity: "iPhone/iPod"
+        },
+        {
+            string: navigator.platform,
+            subString: "Linux",
+            identity: "Linux"
+        }
+    ]
+
+};
+BrowserDetect.init();
+
+if (!Array.prototype.indexOf)
+{
+    Array.prototype.indexOf = function(elt /*, from*/)
+    {
+        var len = this.length;
+
+        var from = Number(arguments[1]) || 0;
+        from = (from < 0)
+                ? Math.ceil(from)
+                : Math.floor(from);
+        if (from < 0)
+            from += len;
+
+        for (; from < len; from++)
+        {
+            if (from in this &&
+                    this[from] === elt)
+                return from;
+        }
+        return -1;
+    };
+}
+
+var iframe;
+var splashScreen;
+var aqiDisplay;
+var loaderArea;
+var geocoder;
+var zoom = 4;
+var splashSpeed = 0;
+var splashPos = 1;
+var aqiSpeed = 0;
+var aqiPos = 0;
+var center = new google.maps.LatLng(40,-95);
+var map;
+
+window.onLoad = function() {
+    if (BrowserDetect.browser != "Chrome" && BrowserDetect.browser != "Firefox" && BrowserDetect.browser != "Safari")
+        alert("WARNING: Your browser will not properly work with this webpage. Please load this page on Chrome, Firefox, or Safari.");
+    var baseValue = "A".charCodeAt(0);
+    for (var i = 0; i < 26; i++){
+        markerImages.push(new google.maps.MarkerImage("http://maps.google.com/mapfiles/marker" + (String.fromCharCode(baseValue + i)) + ".png"));
+    }
+    aqiDisplay = document.getElementById("aqiDisplay");
+    iframe = document.getElementById("graphDisplay");
+    iframe.contentWindow.jsapi = {};
+    iframe.contentWindow.jsapi.getLocation = jsapiGetLocation;
+    iframe.contentWindow.jsapi.getBubbleMapping = jsapiGetBubbleMapping;
+    splashScreen = document.getElementById("splashScreen");
+    geocoder = new google.maps.Geocoder();
+    loaderArea = document.getElementById("loaderArea");
+    map = new google.maps.Map(document.getElementById('map_canvas'), {
+        center: center,
+        zoom: zoom,
+        mapTypeId: google.maps.MapTypeId.HYBRID,
+        scaleControl: true,
+        streetViewControl: false,
+        panControl: true,
+        draggable: true
+    });
+    var layer = new google.maps.FusionTablesLayer({
+        query: {
+            select: 'Latitude',
+            from: '1j2oX9gy1-_jJMftJhZ1aIL3hZpJ9erm8wjxspRM'
+        }
+    });
+    layer.setMap(map);
+    google.maps.event.addListener(layer, 'click', onClick);
+    registerListener();
+    scrollSplash();
+}
+
+function jsapiGetLocation(deviceName, callback){
+    var lat = parseFloat(channelMapping[deviceName].Latitude.value);
+    var lon = parseFloat(channelMapping[deviceName].Longitude.value);
+    geocoder.geocode({'latLng': new google.maps.LatLng(lat,lon)}, function(results, status) {
+        var locationFound = null;
+        if (status == google.maps.GeocoderStatus.OK) {
+            for (var i = 0; i < results.length && !locationFound; i++){
+                for (var j = 0; j < results[i].types.length && !locationFound; j++){
+                    if (results[i].types[j] == "locality")
+                        locationFound = results[i].formatted_address;
+                }
+            }
+        } else {
+        }
+        callback(locationFound);
+    });
+}
+
+function jsapiGetBubbleMapping(){
+    var data = {};
+    for (var i = 0; i < siteData.length; i++){
+        var temp = new Array();
+        var siteName = siteData[i][0];
+        var charName = "A";
+        var marker = siteData[i][2];
+        if (marker != null){
+            var index = 0;
+            for (var j = 0; j < markerImages.length; j++){
+                if (markerImages[j] == marker.getIcon()){
+                    index = j;
+                    break;
+                }
+            }
+            charName = String.fromCharCode("A".charCodeAt(0) + index);
+        }
+        data[siteName] = charName;
+    }
+    return data;
+}
+
+function scrollSplash(){
+    window.setTimeout(function(){
+        if (splashSpeed > 0 && splashPos < 1){
+            if (splashPos <= 0){
+                splashScreen.style.display = "block";
+            }
+            splashPos += splashSpeed;
+            splashScreen.style.opacity = splashPos;
+        }
+        else if (splashSpeed < 0 && splashPos > 0){
+            splashPos += splashSpeed;
+            splashScreen.style.opacity = splashPos;
+            if (splashPos <= 0){
+                splashScreen.style.display = "none";
+            }
+        }
+
+        if (aqiSpeed > 0 && aqiPos < 1){
+            if (aqiPos <= 0){
+                aqiDisplay.style.display = "block";
+            }
+            aqiPos += aqiSpeed;
+            aqiDisplay.style.opacity = aqiPos;
+        }
+        else if (aqiSpeed < 0 && aqiPos > 0){
+            aqiPos += aqiSpeed;
+            aqiDisplay.style.opacity = aqiPos;
+            if (aqiPos <= 0){
+                aqiDisplay.style.display = "none";
+            }
+        }
+        scrollSplash();
+    },50);
+}
+
+function registerListener(){
+    window.setTimeout(function(){
+        if (iframe.contentWindow.grapher && iframe.contentWindow.grapher.addChannelChangeListener){
+            var id = iframe.contentWindow.grapher.addChannelChangeListener(onChannelAddedOrRemoved);
+        }
+        else{
+            registerListener();
+        }
+    },100);
+}
+
+var markerImages = new Array();
+
+var siteData = new Array();
+
+function getSiteData(siteName){
+    for (var i = 0; i < siteData.length; i++){
+        if (siteData[i][0] == siteName)
+            return siteData[i];
+    }
+    return null;
+}
+
+function getSiteIndex(siteName){
+    for (var i = 0; i < siteData.length; i++){
+        if (siteData[i][0] == siteName)
+            return i;
+    }
+    return -1;
+}
+
+function deleteSiteData(siteName){
+    var adjustMarkersMode = false;
+    for (var i = 0; i < siteData.length; i++){
+        if (adjustMarkersMode){
+            var marker = siteData[i][2];
+            if (marker != null){
+                marker.setIcon(markerImages[i % markerImages.length]);
+            }
+        }
+        else if (siteData[i][0] == siteName){
+            var marker = siteData[i][2];
+            siteData.splice(i,1);
+            if (marker != null){
+                marker.setMap(null);
+            }
+            adjustMarkersMode = true;
+            i--;
+        }
+    }
+}
+
+
+function onChannelAddedOrRemoved(deviceName,channelName,added){
+    if (added){
+        var sData = getSiteData(deviceName);
+        if (sData == null){
+            sData = new Array();
+            sData[0] = deviceName;
+            sData[1] = new Array();
+            sData[2] = null;
+            siteData.push(sData);
+        }
+        var channels = sData[1];
+        var chanIndex = channels.indexOf(channelName);
+        if (chanIndex == -1){
+            chanIndex = channels.push(channelName) - 1;
+            if (chanIndex == 0){ //add the marker to the map
+                loadLocationAndDisplayMarker(deviceName);
+            }
+        }
+        if (siteData.length == 1){
+            splashSpeed = -0.1;
+        }
+    }
+    else{
+        var sData = getSiteData(deviceName);
+        if (sData != null){
+            var channels = sData[1];
+            var chanIndex = channels.indexOf(channelName);
+            if (chanIndex != -1){
+                channels.splice(chanIndex,1);
+                if (channels.length == 0){
+                    deleteSiteData(deviceName);
+                }
+            }
+        }
+        if (siteData.length == 0){
+            splashSpeed = 0.1;
+            closeaqidisplay();
+        }
+    }
+}
+
+function loadLocationAndDisplayMarker(deviceName){
+    var lat = parseFloat(channelMapping[deviceName].Latitude.value);
+    var lon = parseFloat(channelMapping[deviceName].Longitude.value);
+    var sData = getSiteData(deviceName);
+    if (sData != null){
+        var temp = new google.maps.Marker({
+            map: map,
+            icon: markerImages[getSiteIndex(deviceName) % markerImages.length],
+            position: new google.maps.LatLng(lat,lon)
+        });
+        sData = getSiteData(deviceName);
+        sData[2] = temp;
+        google.maps.event.addListener(temp, 'click', function(ev){
+            var sData = getSiteData(deviceName);
+            if (sData == null){
+                temp.setMap(null);
+            }
+            else{
+                var channels = sData[1];
+                var channelscopy = new Array();
+                for (var i = 0; i < channels.length; i++){
+                    channelscopy[i] = channels[i];
+                }
+                for (var i = 0; i < channelscopy.length; i++){
+                    iframe.contentWindow.grapher.removeChannel(deviceName, channelscopy[i]);
+                }
+            }
+        });
+    }
+}
+
+var shiftDown = false;
+var rowArray = new Array();
+
+function getShiftState(e){
+    shiftDown = e.shiftKey;
+}
+
+var channelMapping = {};
+
+function onClick(e){
+    var channelsInfo = JSON.parse(e.row.ChannelData.value);
+    channelMapping[e.row.formattedName.value] = e.row;
+    var siteName = e.row.formattedName.value;
+    for (var i = 0; i < channelsInfo.length; i++){
+        if (iframe.contentWindow.grapher.hasChannel(siteName,channelsInfo[i][0]))
+            iframe.contentWindow.grapher.removeChannel(siteName,channelsInfo[i][0]);
+        else
+            iframe.contentWindow.grapher.addChannelWithBounds(siteName,channelsInfo[i][0],channelsInfo[i][1],channelsInfo[i][2]);
+    }
+}
+
+window.openaqidisplay = function(){
+    aqiSpeed = 0.1;
+}
+
+window.closeaqidisplay = function(){
+    aqiSpeed = -0.1;
+}})();
+
+</script>
+</head>
+
+<body style="height:100%; margin:0;" onload="onLoad();">
+<div id="map_canvas" style="position:absolute; left:0; bottom:0; height:50%; width:100%; bored:none;"></div>
+<div style="height: 34px; background-color: #B3B3B3; font-family: Cambria,Georgia,&quot;Times New Roman&quot;,serif; font-size: 27px; padding-left: 13px; color: #1A1A1A;">Air Quality Data Explorer</div>
+<div style="
+    position: absolute;
+    top: 34px;
+    left: 0;
+    bottom: 50%;
+    width: 100%;
+"><div style=" position:absolute; left:0; top: 0; bottom: 32px; width:100%; border:none;">
+
+    <iframe id="graphDisplay" src="Grapher2.html" style="position: absolute;
+left: 0;
+top: 0;
+height: 100%;
+width: 100%;
+border: none;"></iframe>
+
+</div><table width="100%" style="
+    position: absolute;
+    bottom: 0;
+"><tbody><tr><td align="center">
+    <div>
+        <b>Mousewheel</b> zooms graph &nbsp;&nbsp;&nbsp;
+        <b>Dragging</b> graph changes time &nbsp;&nbsp;&nbsp;
+        <b>Click</b> dots adds/removes stations &nbsp;&nbsp;&nbsp;
+        <b>Click</b> <a href="about:blank" onclick="openaqidisplay(); return false;">here</a> for more air quality information
+    </div>
+</td></tr><tr><td><table>
+
+</table></td></tr></tbody></table>
+    <div id="aqiDisplay" onclick="closeaqidisplay(); return false;" style="
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 0.5em white solid;
+    opacity: 0;
+    display:none;
+"><table width="100%" border="0" cellspacing="1" cellpadding="4">
+        <tbody><tr bgcolor="#003366">
+            <th width="185">
+                <div align="center" style="font-family:Airal,sans-serif; color:white;">Levels of Health Concern</div>
+            </th>
+            <th width="174"> <div align="center" style="color:white;">Ozone (ppb)</div> </th>
+            <th width="197"> <div align="center" style="color:white;">PM2.5 (µg/m<sup>3</sup>)</div> </th>
+            <th width="174"> <div align="center" style="color:white;">Air Quality Index</div> </th>
+        </tr>
+        <tr>
+            <td width="185" valign="center" bgcolor="#00E400"><a name="0.1_good"></a>Good</td>
+            <td valign="center" bgcolor="#CCFFCC" align="center">0 - 59</td>
+            <td valign="center" bgcolor="#CCFFCC" align="center">0.0 - 15.4</td>
+            <td valign="center" bgcolor="#CCFFCC" align="center">0 - 50</td>
+        </tr>
+        <tr>
+            <td width="185" valign="center" bgcolor="#FFFF00"><a name="0.1_mod"></a>Moderate</td>
+            <td valign="center" bgcolor="#FFFF99" align="center">60 - 75</td>
+            <td valign="center" bgcolor="#FFFF99" align="center">15.5 - 35.4</td>
+            <td valign="center" bgcolor="#FFFF99" align="center">51 - 100</td>
+        </tr>
+        <tr>
+            <td width="185" valign="center" bgcolor="#FF7E00"><a name="0.1_sens"></a>Unhealthy for <br>
+                Sensitive Groups</td>
+            <td valign="center" bgcolor="#FFCC99" align="center">76 - 95</td>
+            <td valign="center" bgcolor="#FFCC99" align="center">35.5 - 55.4</td>
+            <td valign="center" bgcolor="#FFCC99" align="center">101 - 150</td>
+        </tr>
+        <tr>
+            <td width="185" valign="center" bgcolor="#FF0000" style="color:white;"><a name="0.1_unh"></a>Unhealthy</td>
+            <td valign="center" bgcolor="#FF9999" align="center">96 - 115</td>
+            <td valign="center" bgcolor="#FF9999" align="center">55.5 - 140.4</td>
+            <td valign="center" bgcolor="#FF9999" align="center">151 - 200</td>
+        </tr>
+        <tr>
+            <td width="185" valign="center" bgcolor="#99004C" style="color:white;"><a name="0.1_very"></a>Very Unhealthy</td>
+            <td valign="center" bgcolor="#CC99FF" align="center">116 - 374</td>
+            <td valign="center" bgcolor="#CC99FF" align="center">140.5 - 210.4</td>
+            <td valign="center" bgcolor="#CC99FF" align="center">201 - 300</td>
+        </tr>
+        <tr>
+            <td width="185" bgcolor="#7E0023" valign="center" style="color:white;"><a name="0.1_haz"></a>Hazardous</td>
+            <td valign="center" bgcolor="#aa4444" align="center">301+</td>
+            <td valign="center" bgcolor="#aa4444" align="center">210.5+</td>
+            <td valign="center" bgcolor="#aa4444" align="center">300+</td>
+        </tr>
+        </tbody></table><br>
+
+        <em style="
+"><font size="-1">Adapted from <span onclick="event.stopPropagation();"><a href="http://www.airnow.gov/?action=aqibasics.aqi" target="_blank">http://www.airnow.gov/?action=aqibasics.aqi</a></span><div style="
+    display: inline;
+    right: 1em;
+    text-align: right;
+    position: absolute;
+"><a href="about:blank" onclick="closeaqidisplay(); return false;">Click to close</a></div></font></em></div>
+
+</div>
+<iframe id="splashScreen" src="SplashScreen.html" style="position:absolute; left:0; top:0; height:50%; width:100%; border:none; background:white;display:block;"></iframe>
+</body>
